@@ -1,6 +1,14 @@
 name: Infra CI/CD - Banco Patacon LAB01
 
 on:
+  push:
+    branches:
+      - m3-c4-lab
+    paths:
+      - ".github/workflows/infra-ci.yml"
+      - "infra/**"
+      - "ansible/**"
+      - "scripts/**"
   workflow_dispatch:
     inputs:
       operation:
