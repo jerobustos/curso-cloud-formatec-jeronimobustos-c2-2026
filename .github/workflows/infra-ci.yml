@@ -223,3 +223,5 @@ jobs:
         run: |
           PUBLIC_IP="$(terraform -chdir=infra output -raw public_ip)"
           curl --fail --retry 10 --retry-delay 12 --retry-connrefused "http://${PUBLIC_IP}/"
+
+          # Test de guardado
