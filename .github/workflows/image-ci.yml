@@ -1,0 +1,94 @@
+name: Image CI - Banco Patacon LAB02
+on:
+  push:
+    paths:
+      - "app/**"
+      - ".github/workflows/image-ci.yml"
+  pull_request:
+    paths:
+      - "app/**"
+      - ".github/workflows/image-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: image-lab02-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    name: Construir y probar imagen
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      # Orden 1: el runner comienza vacío; primero necesita descargar el repositorio.
+      - name: 1. Descargar repositorio
+        uses: actions/checkout@v7
+
+      # Orden 2: confirmamos qué herramienta ejecutará el build antes de usarla.
+      - name: 2. Verificar Docker
+        run: docker version
+
+      # Orden 3: construimos una imagen trazable con el SHA exacto del commit.
+      - name: 3. Construir imagen
+        run: |
+          docker build \
+            --build-arg APP_VERSION=${{ github.sha }} \
+            --tag banco-patacon-status:${{ github.sha }} \
+            app
+
+      # Orden 4: sólo podemos iniciar el contenedor si el build anterior terminó bien.
+      - name: 4. Iniciar contenedor
+        run: |
+          docker run --detach \
+            --name banco-patacon-status-ci \
+            --publish 8080:80 \
+            banco-patacon-status:${{ github.sha }}
+
+      # Orden 5: comprobamos el comportamiento observable, no sólo que exista la imagen.
+      - name: 5. Ejecutar smoke test HTTP
+        run: |
+          for attempt in {1..10}; do
+            if curl --fail --silent http://127.0.0.1:8080/ | grep --quiet "Banco Patacon"; then
+              echo "Smoke test correcto"
+              exit 0
+            fi
+            echo "Intento ${attempt}/10"
+            sleep 2
+          done
+          echo "La aplicación no respondió correctamente" >&2
+          exit 1
+
+      # Orden 6: después del smoke test registramos qué imagen fue validada.
+      - name: 6. Generar metadata
+        run: |
+          {
+            echo "repository=${{ github.repository }}"
+            echo "commit=${{ github.sha }}"
+            echo "image=banco-patacon-status:${{ github.sha }}"
+            echo -n "label_revision="
+            docker image inspect banco-patacon-status:${{ github.sha }} \
+              --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}'
+          } > image-metadata.txt
+          cat image-metadata.txt
+
+      # Orden 7: guardamos evidencia pequeña; no subimos la imagen Docker completa.
+      - name: 7. Publicar metadata como artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: image-metadata-${{ github.sha }}
+          path: image-metadata.txt
+          retention-days: 3
+
+      # Orden 8: si un step anterior falla, los logs ayudan a diagnosticar el contenedor.
+      - name: 8. Mostrar logs si falla
+        if: failure()
+        run: docker logs banco-patacon-status-ci || true
+
+      # Orden 9: always() garantiza la limpieza tanto en éxito como en fallo.
+      - name: 9. Limpiar runner
+        if: always()
+        run: docker rm --force banco-patacon-status-ci || true
